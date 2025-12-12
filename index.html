@@ -2,10 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Line Striping Calculator</title>
-
-  <!-- ArcGIS JS API -->
-  <script src="https://js.arcgis.com/4.29/"></script>
+  <title>Line Striping Calculator (Public Layer)</title>
 
   <style>
     body {
@@ -50,9 +47,6 @@
 
   <h2>Line Striping Calculator</h2>
 
-  <!-- REQUIRED for Hub OAuth -->
-  <button id="signinBtn">Sign in to ArcGIS Online</button>
-
   <div class="row">
     <label>Route:</label>
     <input id="route" placeholder="Route name" />
@@ -75,60 +69,20 @@
 
 <script>
 /* ===========================
-   OAUTH (HUB-SAFE)
-=========================== */
-
-let accessToken = null;
-let esriIdRef = null;
-let oauthInfoRef = null;
-
-require([
-  "esri/identity/OAuthInfo",
-  "esri/identity/IdentityManager"
-], function (OAuthInfo, esriId) {
-
-  oauthInfoRef = new OAuthInfo({
-    appId: "9mKAWie0HElv0W4N",
-    popup: true
-  });
-
-  esriId.registerOAuthInfos([oauthInfoRef]);
-  esriIdRef = esriId;
-
-  // Silent check (no popup)
-  esriId
-    .checkSignInStatus(oauthInfoRef.portalUrl + "/sharing")
-    .then(() => {
-      accessToken = esriId.credentials[0].token;
-      document.getElementById("signinBtn").style.display = "none";
-      console.log("Already signed in");
-    })
-    .catch(() => {
-      console.log("User not signed in yet");
-    });
-});
-
-document.getElementById("signinBtn").onclick = function () {
-  esriIdRef
-    .getCredential(oauthInfoRef.portalUrl + "/sharing")
-    .then(() => {
-      accessToken = esriIdRef.credentials[0].token;
-      document.getElementById("signinBtn").style.display = "none";
-      console.log("Signed in via popup");
-    });
-};
-
-/* ===========================
-   APP LOGIC
+   CONFIG – PUBLIC LAYER
 =========================== */
 
 const SERVICE_URL =
   "https://services3.arcgis.com/hyLf0m7qTkMThtUP/arcgis/rest/services/Marking_Lines_ExportFeatures/FeatureServer/0";
 
-const BEG_FIELD = "Beg_MP";
-const END_FIELD = "End_MP";
-const COLOR_FIELD = "Color";
 const ROUTE_FIELD = "Route";
+const BEG_FIELD   = "Beg_MP";
+const END_FIELD   = "End_MP";
+const COLOR_FIELD = "Color";
+
+/* ===========================
+   MAIN LOGIC
+=========================== */
 
 async function calculate() {
   const errorEl = document.getElementById("error");
@@ -137,12 +91,7 @@ async function calculate() {
   errorEl.textContent = "";
   resultEl.textContent = "";
 
-  if (!accessToken) {
-    errorEl.textContent = "Please sign in first.";
-    return;
-  }
-
-  const route = document.getElementById("route").value;
+  const route = document.getElementById("route").value.trim();
   const startMP = parseFloat(document.getElementById("startMP").value);
   const endMP = parseFloat(document.getElementById("endMP").value);
 
@@ -159,38 +108,44 @@ async function calculate() {
     f: "json",
     where: where,
     outFields: `${BEG_FIELD},${END_FIELD},${COLOR_FIELD}`,
-    returnGeometry: "false",
-    token: accessToken
+    returnGeometry: "false"
   });
 
-  const response = await fetch(`${SERVICE_URL}/query?${params}`);
-  const data = await response.json();
+  try {
+    const response = await fetch(`${SERVICE_URL}/query?${params}`);
+    const data = await response.json();
 
-  if (!data.features || data.features.length === 0) {
-    resultEl.textContent = "No striping found in this range.";
-    return;
+    if (!data.features || data.features.length === 0) {
+      resultEl.textContent = "No striping found in this range.";
+      return;
+    }
+
+    let yellowFeet = 0;
+    let whiteFeet = 0;
+
+    data.features.forEach(f => {
+      const beg = f.attributes[BEG_FIELD];
+      const end = f.attributes[END_FIELD];
+      const color = f.attributes[COLOR_FIELD];
+
+      // overlap in miles
+      const overlapMiles =
+        Math.max(0, Math.min(end, endMP) - Math.max(beg, startMP));
+
+      const feet = overlapMiles * 5280;
+
+      if (color === "Yellow") yellowFeet += feet;
+      if (color === "White")  whiteFeet += feet;
+    });
+
+    resultEl.innerHTML =
+      `Yellow: ${yellowFeet.toFixed(2)} ft<br>` +
+      `White: ${whiteFeet.toFixed(2)} ft`;
+
+  } catch (err) {
+    errorEl.textContent = "Error querying the service.";
+    console.error(err);
   }
-
-  let yellowFeet = 0;
-  let whiteFeet = 0;
-
-  data.features.forEach(f => {
-    const a = f.attributes[BEG_FIELD];
-    const b = f.attributes[END_FIELD];
-    const color = f.attributes[COLOR_FIELD];
-
-    const overlapMiles =
-      Math.max(0, Math.min(b, endMP) - Math.max(a, startMP));
-
-    const feet = overlapMiles * 5280;
-
-    if (color === "Yellow") yellowFeet += feet;
-    if (color === "White") whiteFeet += feet;
-  });
-
-  resultEl.innerHTML =
-    `Yellow: ${yellowFeet.toFixed(2)} ft<br>` +
-    `White: ${whiteFeet.toFixed(2)} ft`;
 }
 </script>
 
