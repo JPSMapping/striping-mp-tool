@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Line Striping by Milepost</title>
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 12px;
+      max-width: 520px;
+    }
+
+    h3 {
+      margin-top: 0;
+    }
+
+    .row {
+      margin-bottom: 8px;
+    }
+
+    label {
+      display: inline-block;
+      width: 90px;
+      font-weight: 600;
+    }
+
+    input {
+      width: 160px;
+      padding: 4px 6px;
+    }
+
+    button {
+      margin-top: 10px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    #result {
+      margin-top: 14px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    #error {
+      margin-top: 8px;
+      color: #c62828;
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <h3>Line Striping Length by Milepost</h3>
+
+  <div class="row">
+    <label for="route">Route:</label>
+    <input id="route" type="text" placeholder="e.g. I-81" />
+  </div>
+
+  <div class="row">
+    <label for="startMP">Start MP:</label>
+    <input id="startMP" type="number" step="0.01" />
+  </div>
+
+  <div class="row">
+    <label for="endMP">End MP:</label>
+    <input id="endMP" type="number" step="0.01" />
+  </div>
+
+  <button onclick="calculate()">Calculate</button>
+
+  <div id="error"></div>
+  <div id="result"></div>
+
+  <script>
+    // ==========================================================
+    // CONFIG — YOUR ACTUAL FEATURE SERVICE + FIELD NAMES
+    // ==========================================================
+
+    const FEATURE_SERVICE_QUERY_URL =
+      "https://services3.arcgis.com/hyLf0m7qTkMThtUP/arcgis/rest/services/Marking_Lines_ExportFeatures/FeatureServer/0/query";
+
+    const BEG_FIELD   = "Beg_MP";
+    const END_FIELD   = "End_MP";
+    const ROUTE_FIELD = "Route";
+
+    // ==========================================================
+    // CORE LOGIC
+    // ==========================================================
+
+    async function calculate() {
+      const startMP = Number(document.getElementById("startMP").value);
+      const endMP   = Number(document.getElementById("endMP").value);
+      const route   = document.getElementById("route").value.trim();
+
+      const errorEl  = document.getElementById("error");
+      const resultEl = document.getElementById("result");
+
+      errorEl.textContent  = "";
+      resultEl.textContent = "";
+
+      if (isNaN(startMP) || isNaN(endMP)) {
+        errorEl.textContent = "Start MP and End MP are required.";
+        return;
+      }
+
+      if (endMP <= startMP) {
+        errorEl.textContent = "End MP must be greater than Start MP.";
+        return;
+      }
+
+      // Build WHERE clause (overlap logic + route)
+      let where = `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP}`;
+
+      if (route.length > 0) {
+        const safeRoute = route.replace(/'/g, "''");
+        where += ` AND ${ROUTE_FIELD} = '${safeRoute}'`;
+      }
+
+      const params = new URLSearchParams({
+        f: "json",
+        where: where,
+        outFields: `${BEG_FIELD},${END_FIELD}`,
+        returnGeometry: "false"
+      });
+
+      try {
+        const response = await fetch(
+          FEATURE_SERVICE_QUERY_URL + "?" + params.toString()
+        );
+
+        if (!response.ok) {
+          throw new Error("Service error: " + response.status);
+        }
+
+        const data = await response.json();
+
+        if (!data.features || data.features.length === 0) {
+          resultEl.textContent = "0 ft of striping in this range.";
+          return;
+        }
+
+        let totalFeet = 0;
+
+        for (const feature of data.features) {
+          const gStart = Number(feature.attributes[BEG_FIELD]);
+          const gEnd   = Number(feature.attributes[END_FIELD]);
+
+          if (isNaN(gStart) || isNaN(gEnd)) continue;
+
+          // Exact overlap calculation (miles)
+          const overlapMiles =
+            Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
+
+          totalFeet += overlapMiles * 5280;
+        }
+
+        resultEl.textContent =
+          totalFeet.toFixed(1) + " ft of line striping";
+
+      } catch (err) {
+        console.error(err);
+        errorEl.textContent = "Error querying striping layer.";
+      }
+    }
+  </script>
+</body>
+</html>
