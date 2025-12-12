@@ -31,7 +31,6 @@
     button {
       margin-top: 10px;
       padding: 8px 14px;
-      margin-right: 10px;
     }
 
     #result {
@@ -43,13 +42,16 @@
       margin-top: 10px;
       color: red;
     }
+
+    /* 🔧 FIX: lighten ArcGIS OAuth modal backdrop */
+    .esri-overlay {
+      background-color: rgba(0, 0, 0, 0.2) !important;
+    }
   </style>
 </head>
 
 <body>
   <h2>Line Striping Calculator</h2>
-
-  <button id="signin" onclick="signIn()">Sign in to ArcGIS Online</button>
 
   <div class="row">
     <label>Route:</label>
@@ -73,50 +75,33 @@
 
 <script>
 /* ===========================
-   OAuth Setup (iframe-safe)
+   OAuth (automatic, no button)
 =========================== */
 
 let accessToken = null;
-let esriIdRef = null;
-let oauthInfoRef = null;
 
 require([
   "esri/identity/OAuthInfo",
   "esri/identity/IdentityManager"
 ], function (OAuthInfo, esriId) {
 
-  oauthInfoRef = new OAuthInfo({
+  const oauthInfo = new OAuthInfo({
     appId: "9mKAWie0HElv0W4N",
-    popup: true
+    popup: false   // redirect-based, was already working
   });
 
-  esriId.registerOAuthInfos([oauthInfoRef]);
-  esriIdRef = esriId;
+  esriId.registerOAuthInfos([oauthInfo]);
 
-  // Silent check (no popup)
   esriId
-    .checkSignInStatus(oauthInfoRef.portalUrl + "/sharing")
+    .checkSignInStatus(oauthInfo.portalUrl + "/sharing")
     .then(() => {
       accessToken = esriId.credentials[0].token;
-      document.getElementById("signin").style.display = "none";
-      console.log("Already authenticated");
+      console.log("OAuth authenticated");
     })
     .catch(() => {
-      console.log("User not signed in yet");
+      esriId.getCredential(oauthInfo.portalUrl + "/sharing");
     });
 });
-
-function signIn() {
-  if (!esriIdRef || !oauthInfoRef) return;
-
-  esriIdRef
-    .getCredential(oauthInfoRef.portalUrl + "/sharing")
-    .then(() => {
-      accessToken = esriIdRef.credentials[0].token;
-      document.getElementById("signin").style.display = "none";
-      console.log("Signed in via button");
-    });
-}
 
 /* ===========================
    App Logic
@@ -138,7 +123,7 @@ async function calculate() {
   resultEl.textContent = "";
 
   if (!accessToken) {
-    errorEl.textContent = "Please sign in first.";
+    errorEl.textContent = "Authenticating… please wait a moment.";
     return;
   }
 
