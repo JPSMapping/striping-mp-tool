@@ -21,7 +21,7 @@
 
     label {
       display: inline-block;
-      width: 90px;
+      width: 95px;
       font-weight: 600;
     }
 
@@ -37,7 +37,7 @@
       cursor: pointer;
     }
 
-    #result {
+    .result {
       margin-top: 14px;
       font-size: 16px;
       font-weight: 700;
@@ -61,22 +61,24 @@
 
   <div class="row">
     <label for="startMP">Start MP:</label>
-    <input id="startMP" type="number" step="0.01" />
+    <input id="startMP" type="number" step="0.001" />
   </div>
 
   <div class="row">
     <label for="endMP">End MP:</label>
-    <input id="endMP" type="number" step="0.01" />
+    <input id="endMP" type="number" step="0.001" />
   </div>
 
   <button onclick="calculate()">Calculate</button>
 
   <div id="error"></div>
-  <div id="result"></div>
+
+  <div class="result" id="yellowResult"></div>
+  <div class="result" id="whiteResult"></div>
 
   <script>
     // ==========================================================
-    // CONFIG — YOUR ACTUAL FEATURE SERVICE + FIELD NAMES
+    // CONFIG — YOUR FEATURE SERVICE + FIELD NAMES
     // ==========================================================
 
     const FEATURE_SERVICE_QUERY_URL =
@@ -85,6 +87,7 @@
     const BEG_FIELD   = "Beg_MP";
     const END_FIELD   = "End_MP";
     const ROUTE_FIELD = "Route";
+    const COLOR_FIELD = "Color";   // <-- CONFIRM THIS FIELD NAME
 
     // ==========================================================
     // CORE LOGIC
@@ -96,10 +99,12 @@
       const route   = document.getElementById("route").value.trim();
 
       const errorEl  = document.getElementById("error");
-      const resultEl = document.getElementById("result");
+      const yellowEl = document.getElementById("yellowResult");
+      const whiteEl  = document.getElementById("whiteResult");
 
       errorEl.textContent  = "";
-      resultEl.textContent = "";
+      yellowEl.textContent = "";
+      whiteEl.textContent  = "";
 
       if (isNaN(startMP) || isNaN(endMP)) {
         errorEl.textContent = "Start MP and End MP are required.";
@@ -111,7 +116,6 @@
         return;
       }
 
-      // Build WHERE clause (overlap logic + route)
       let where = `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP}`;
 
       if (route.length > 0) {
@@ -122,7 +126,7 @@
       const params = new URLSearchParams({
         f: "json",
         where: where,
-        outFields: `${BEG_FIELD},${END_FIELD}`,
+        outFields: `${BEG_FIELD},${END_FIELD},${COLOR_FIELD}`,
         returnGeometry: "false"
       });
 
@@ -137,28 +141,35 @@
 
         const data = await response.json();
 
-        if (!data.features || data.features.length === 0) {
-          resultEl.textContent = "0 ft of striping in this range.";
-          return;
+        let yellowFeet = 0;
+        let whiteFeet  = 0;
+
+        if (data.features) {
+          for (const feature of data.features) {
+            const gStart = Number(feature.attributes[BEG_FIELD]);
+            const gEnd   = Number(feature.attributes[END_FIELD]);
+            const color  = feature.attributes[COLOR_FIELD];
+
+            if (isNaN(gStart) || isNaN(gEnd)) continue;
+
+            const overlapMiles =
+              Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
+
+            const feet = overlapMiles * 5280;
+
+            if (color === "Yellow") {
+              yellowFeet += feet;
+            } else if (color === "White") {
+              whiteFeet += feet;
+            }
+          }
         }
 
-        let totalFeet = 0;
+        yellowEl.textContent =
+          "Yellow Striping: " + yellowFeet.toFixed(2) + " ft";
 
-        for (const feature of data.features) {
-          const gStart = Number(feature.attributes[BEG_FIELD]);
-          const gEnd   = Number(feature.attributes[END_FIELD]);
-
-          if (isNaN(gStart) || isNaN(gEnd)) continue;
-
-          // Exact overlap calculation (miles)
-          const overlapMiles =
-            Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
-
-          totalFeet += overlapMiles * 5280;
-        }
-
-        resultEl.textContent =
-          totalFeet.toFixed(1) + " ft of line striping";
+        whiteEl.textContent =
+          "White Striping: " + whiteFeet.toFixed(2) + " ft";
 
       } catch (err) {
         console.error(err);
