@@ -6,18 +6,12 @@
 
   <style>
     body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-family: system-ui, sans-serif;
       margin: 12px;
       max-width: 520px;
     }
 
-    h3 {
-      margin-top: 0;
-    }
-
-    .row {
-      margin-bottom: 8px;
-    }
+    .row { margin-bottom: 8px; }
 
     label {
       display: inline-block;
@@ -25,15 +19,14 @@
       font-weight: 600;
     }
 
-    input {
-      width: 160px;
+    input, select {
+      width: 180px;
       padding: 4px 6px;
     }
 
     button {
       margin-top: 10px;
       padding: 6px 12px;
-      font-size: 14px;
       cursor: pointer;
     }
 
@@ -56,7 +49,9 @@
 
   <div class="row">
     <label for="route">Route:</label>
-    <input id="route" type="text" placeholder="e.g. I-81" />
+    <select id="route">
+      <option value="">-- Select Route --</option>
+    </select>
   </div>
 
   <div class="row">
@@ -72,110 +67,121 @@
   <button onclick="calculate()">Calculate</button>
 
   <div id="error"></div>
-
   <div class="result" id="yellowResult"></div>
   <div class="result" id="whiteResult"></div>
 
   <script>
-    // ==========================================================
-    // CONFIG — YOUR FEATURE SERVICE + FIELD NAMES
-    // ==========================================================
-
     const FEATURE_SERVICE_QUERY_URL =
       "https://services3.arcgis.com/hyLf0m7qTkMThtUP/arcgis/rest/services/Marking_Lines_ExportFeatures/FeatureServer/0/query";
 
     const BEG_FIELD   = "Beg_MP";
     const END_FIELD   = "End_MP";
     const ROUTE_FIELD = "Route";
-    const COLOR_FIELD = "Color";   // <-- CONFIRM THIS FIELD NAME
+    const COLOR_FIELD = "Color";
 
-    // ==========================================================
-    // CORE LOGIC
-    // ==========================================================
+    // ----------------------------------------------------------
+    // LOAD ROUTES INTO DROPDOWN
+    // ----------------------------------------------------------
+    async function loadRoutes() {
+      const params = new URLSearchParams({
+        f: "json",
+        where: "1=1",
+        outFields: ROUTE_FIELD,
+        returnDistinctValues: "true",
+        returnGeometry: "false"
+      });
 
+      const resp = await fetch(FEATURE_SERVICE_QUERY_URL + "?" + params);
+      const data = await resp.json();
+
+      const routeSelect = document.getElementById("route");
+
+      if (data.features) {
+        const routes = data.features
+          .map(f => f.attributes[ROUTE_FIELD])
+          .filter(v => v !== null && v !== "")
+          .sort();
+
+        for (const r of routes) {
+          const opt = document.createElement("option");
+          opt.value = r;
+          opt.textContent = r;
+          routeSelect.appendChild(opt);
+        }
+      }
+    }
+
+    // ----------------------------------------------------------
+    // CALCULATION
+    // ----------------------------------------------------------
     async function calculate() {
-      const startMP = Number(document.getElementById("startMP").value);
-      const endMP   = Number(document.getElementById("endMP").value);
-      const route   = document.getElementById("route").value.trim();
+      const startMP = Number(startMPInput.value);
+      const endMP   = Number(endMPInput.value);
+      const route   = routeSelect.value;
 
-      const errorEl  = document.getElementById("error");
-      const yellowEl = document.getElementById("yellowResult");
-      const whiteEl  = document.getElementById("whiteResult");
+      error.textContent = "";
+      yellowResult.textContent = "";
+      whiteResult.textContent = "";
 
-      errorEl.textContent  = "";
-      yellowEl.textContent = "";
-      whiteEl.textContent  = "";
-
-      if (isNaN(startMP) || isNaN(endMP)) {
-        errorEl.textContent = "Start MP and End MP are required.";
+      if (!route) {
+        error.textContent = "Please select a route.";
+        return;
+      }
+      if (isNaN(startMP) || isNaN(endMP) || endMP <= startMP) {
+        error.textContent = "Enter a valid Start MP and End MP.";
         return;
       }
 
-      if (endMP <= startMP) {
-        errorEl.textContent = "End MP must be greater than Start MP.";
-        return;
-      }
-
-      let where = `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP}`;
-
-      if (route.length > 0) {
-        const safeRoute = route.replace(/'/g, "''");
-        where += ` AND ${ROUTE_FIELD} = '${safeRoute}'`;
-      }
+      let where =
+        `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP} AND ${ROUTE_FIELD} = '${route}'`;
 
       const params = new URLSearchParams({
         f: "json",
-        where: where,
+        where,
         outFields: `${BEG_FIELD},${END_FIELD},${COLOR_FIELD}`,
         returnGeometry: "false"
       });
 
-      try {
-        const response = await fetch(
-          FEATURE_SERVICE_QUERY_URL + "?" + params.toString()
-        );
+      const resp = await fetch(FEATURE_SERVICE_QUERY_URL + "?" + params);
+      const data = await resp.json();
 
-        if (!response.ok) {
-          throw new Error("Service error: " + response.status);
+      let yellowFeet = 0;
+      let whiteFeet  = 0;
+
+      if (data.features) {
+        for (const f of data.features) {
+          const gStart = Number(f.attributes[BEG_FIELD]);
+          const gEnd   = Number(f.attributes[END_FIELD]);
+          const color  = f.attributes[COLOR_FIELD];
+
+          const overlap =
+            Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
+
+          const feet = overlap * 5280;
+
+          if (color === "Yellow") yellowFeet += feet;
+          if (color === "White")  whiteFeet  += feet;
         }
-
-        const data = await response.json();
-
-        let yellowFeet = 0;
-        let whiteFeet  = 0;
-
-        if (data.features) {
-          for (const feature of data.features) {
-            const gStart = Number(feature.attributes[BEG_FIELD]);
-            const gEnd   = Number(feature.attributes[END_FIELD]);
-            const color  = feature.attributes[COLOR_FIELD];
-
-            if (isNaN(gStart) || isNaN(gEnd)) continue;
-
-            const overlapMiles =
-              Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
-
-            const feet = overlapMiles * 5280;
-
-            if (color === "Yellow") {
-              yellowFeet += feet;
-            } else if (color === "White") {
-              whiteFeet += feet;
-            }
-          }
-        }
-
-        yellowEl.textContent =
-          "Yellow Striping: " + yellowFeet.toFixed(2) + " ft";
-
-        whiteEl.textContent =
-          "White Striping: " + whiteFeet.toFixed(2) + " ft";
-
-      } catch (err) {
-        console.error(err);
-        errorEl.textContent = "Error querying striping layer.";
       }
+
+      yellowResult.textContent =
+        `Yellow Striping: ${yellowFeet.toFixed(2)} ft`;
+
+      whiteResult.textContent =
+        `White Striping: ${whiteFeet.toFixed(2)} ft`;
     }
+
+    // ----------------------------------------------------------
+    // INIT
+    // ----------------------------------------------------------
+    const routeSelect   = document.getElementById("route");
+    const startMPInput  = document.getElementById("startMP");
+    const endMPInput    = document.getElementById("endMP");
+    const error         = document.getElementById("error");
+    const yellowResult  = document.getElementById("yellowResult");
+    const whiteResult   = document.getElementById("whiteResult");
+
+    loadRoutes();
   </script>
 </body>
 </html>
