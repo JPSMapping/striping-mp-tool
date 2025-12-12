@@ -2,186 +2,177 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Line Striping by Milepost</title>
+  <title>Line Striping MP Calculator</title>
+
+  <!-- ArcGIS JS API (OAuth + Identity) -->
+  <script src="https://js.arcgis.com/4.29/"></script>
 
   <style>
     body {
-      font-family: system-ui, sans-serif;
-      margin: 12px;
-      max-width: 520px;
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 600px;
     }
 
-    .row { margin-bottom: 8px; }
+    .row {
+      margin-bottom: 10px;
+    }
 
     label {
       display: inline-block;
-      width: 95px;
-      font-weight: 600;
+      width: 120px;
     }
 
     input, select {
-      width: 180px;
-      padding: 4px 6px;
+      width: 200px;
+      padding: 4px;
     }
 
     button {
-      margin-top: 10px;
-      padding: 6px 12px;
-      cursor: pointer;
+      margin-top: 15px;
+      padding: 8px 16px;
     }
 
-    .result {
-      margin-top: 14px;
-      font-size: 16px;
-      font-weight: 700;
+    #result {
+      margin-top: 20px;
+      font-weight: bold;
     }
 
     #error {
-      margin-top: 8px;
-      color: #c62828;
-      font-weight: 600;
+      margin-top: 10px;
+      color: red;
     }
   </style>
 </head>
 
 <body>
-  <h3>Line Striping Length by Milepost</h3>
+  <h2>Line Striping Calculator</h2>
 
   <div class="row">
-    <label for="route">Route:</label>
-    <select id="route">
-      <option value="">-- Select Route --</option>
-    </select>
+    <label>Route:</label>
+    <input id="route" placeholder="Route name" />
   </div>
 
   <div class="row">
-    <label for="startMP">Start MP:</label>
+    <label>Start MP:</label>
     <input id="startMP" type="number" step="0.001" />
   </div>
 
   <div class="row">
-    <label for="endMP">End MP:</label>
+    <label>End MP:</label>
     <input id="endMP" type="number" step="0.001" />
   </div>
 
   <button onclick="calculate()">Calculate</button>
 
+  <div id="result"></div>
   <div id="error"></div>
-  <div class="result" id="yellowResult"></div>
-  <div class="result" id="whiteResult"></div>
 
-  <script>
-    const FEATURE_SERVICE_QUERY_URL =
-      "https://services3.arcgis.com/hyLf0m7qTkMThtUP/arcgis/rest/services/Marking_Lines_ExportFeatures/FeatureServer/0/query";
+<script>
+/* ===========================
+   OAuth Setup
+=========================== */
 
-    const BEG_FIELD   = "Beg_MP";
-    const END_FIELD   = "End_MP";
-    const ROUTE_FIELD = "Route";
-    const COLOR_FIELD = "Color";
+let accessToken = null;
 
-    // ----------------------------------------------------------
-    // LOAD ROUTES INTO DROPDOWN
-    // ----------------------------------------------------------
-    async function loadRoutes() {
-      const params = new URLSearchParams({
-        f: "json",
-        where: "1=1",
-        outFields: ROUTE_FIELD,
-        returnDistinctValues: "true",
-        returnGeometry: "false"
-      });
+require([
+  "esri/identity/OAuthInfo",
+  "esri/identity/IdentityManager"
+], function (OAuthInfo, esriId) {
 
-      const resp = await fetch(FEATURE_SERVICE_QUERY_URL + "?" + params);
-      const data = await resp.json();
+  const oauthInfo = new OAuthInfo({
+    appId: "9mKAWie0HElv0W4N",
+    popup: false
+  });
 
-      const routeSelect = document.getElementById("route");
+  esriId.registerOAuthInfos([oauthInfo]);
 
-      if (data.features) {
-        const routes = data.features
-          .map(f => f.attributes[ROUTE_FIELD])
-          .filter(v => v !== null && v !== "")
-          .sort();
+  esriId
+    .checkSignInStatus(oauthInfo.portalUrl + "/sharing")
+    .then(() => {
+      accessToken = esriId.credentials[0].token;
+      console.log("OAuth authenticated");
+    })
+    .catch(() => {
+      esriId.getCredential(oauthInfo.portalUrl + "/sharing");
+    });
+});
 
-        for (const r of routes) {
-          const opt = document.createElement("option");
-          opt.value = r;
-          opt.textContent = r;
-          routeSelect.appendChild(opt);
-        }
-      }
-    }
+/* ===========================
+   App Logic
+=========================== */
 
-    // ----------------------------------------------------------
-    // CALCULATION
-    // ----------------------------------------------------------
-    async function calculate() {
-      const startMP = Number(startMPInput.value);
-      const endMP   = Number(endMPInput.value);
-      const route   = routeSelect.value;
+const SERVICE_URL =
+  "https://services3.arcgis.com/hyLf0m7qTkMThtUP/arcgis/rest/services/Marking_Lines_ExportFeatures/FeatureServer/0";
 
-      error.textContent = "";
-      yellowResult.textContent = "";
-      whiteResult.textContent = "";
+const BEG_FIELD = "Beg_MP";
+const END_FIELD = "End_MP";
+const COLOR_FIELD = "Color";
+const ROUTE_FIELD = "Route";
 
-      if (!route) {
-        error.textContent = "Please select a route.";
-        return;
-      }
-      if (isNaN(startMP) || isNaN(endMP) || endMP <= startMP) {
-        error.textContent = "Enter a valid Start MP and End MP.";
-        return;
-      }
+async function calculate() {
+  const errorEl = document.getElementById("error");
+  const resultEl = document.getElementById("result");
 
-      let where =
-        `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP} AND ${ROUTE_FIELD} = '${route}'`;
+  errorEl.textContent = "";
+  resultEl.textContent = "";
 
-      const params = new URLSearchParams({
-        f: "json",
-        where,
-        outFields: `${BEG_FIELD},${END_FIELD},${COLOR_FIELD}`,
-        returnGeometry: "false"
-      });
+  if (!accessToken) {
+    errorEl.textContent = "Authenticating… please try again in a second.";
+    return;
+  }
 
-      const resp = await fetch(FEATURE_SERVICE_QUERY_URL + "?" + params);
-      const data = await resp.json();
+  const route = document.getElementById("route").value;
+  const startMP = parseFloat(document.getElementById("startMP").value);
+  const endMP = parseFloat(document.getElementById("endMP").value);
 
-      let yellowFeet = 0;
-      let whiteFeet  = 0;
+  if (!route || isNaN(startMP) || isNaN(endMP) || endMP <= startMP) {
+    errorEl.textContent = "Please enter a route and a valid MP range.";
+    return;
+  }
 
-      if (data.features) {
-        for (const f of data.features) {
-          const gStart = Number(f.attributes[BEG_FIELD]);
-          const gEnd   = Number(f.attributes[END_FIELD]);
-          const color  = f.attributes[COLOR_FIELD];
+  const where =
+    `${ROUTE_FIELD} = '${route}' AND ` +
+    `${END_FIELD} >= ${startMP} AND ${BEG_FIELD} <= ${endMP}`;
 
-          const overlap =
-            Math.max(0, Math.min(gEnd, endMP) - Math.max(gStart, startMP));
+  const params = new URLSearchParams({
+    f: "json",
+    where: where,
+    outFields: `${BEG_FIELD},${END_FIELD},${COLOR_FIELD}`,
+    returnGeometry: "false",
+    token: accessToken
+  });
 
-          const feet = overlap * 5280;
+  const response = await fetch(`${SERVICE_URL}/query?${params}`);
+  const data = await response.json();
 
-          if (color === "Yellow") yellowFeet += feet;
-          if (color === "White")  whiteFeet  += feet;
-        }
-      }
+  if (!data.features || data.features.length === 0) {
+    resultEl.textContent = "No striping found in this range.";
+    return;
+  }
 
-      yellowResult.textContent =
-        `Yellow Striping: ${yellowFeet.toFixed(2)} ft`;
+  let yellowFeet = 0;
+  let whiteFeet = 0;
 
-      whiteResult.textContent =
-        `White Striping: ${whiteFeet.toFixed(2)} ft`;
-    }
+  data.features.forEach(f => {
+    const a = f.attributes[BEG_FIELD];
+    const b = f.attributes[END_FIELD];
+    const color = f.attributes[COLOR_FIELD];
 
-    // ----------------------------------------------------------
-    // INIT
-    // ----------------------------------------------------------
-    const routeSelect   = document.getElementById("route");
-    const startMPInput  = document.getElementById("startMP");
-    const endMPInput    = document.getElementById("endMP");
-    const error         = document.getElementById("error");
-    const yellowResult  = document.getElementById("yellowResult");
-    const whiteResult   = document.getElementById("whiteResult");
+    const overlapMiles =
+      Math.max(0, Math.min(b, endMP) - Math.max(a, startMP));
 
-    loadRoutes();
-  </script>
+    const feet = overlapMiles * 5280;
+
+    if (color === "Yellow") yellowFeet += feet;
+    if (color === "White") whiteFeet += feet;
+  });
+
+  resultEl.innerHTML =
+    `Yellow: ${yellowFeet.toFixed(2)} ft<br>` +
+    `White: ${whiteFeet.toFixed(2)} ft`;
+}
+</script>
+
 </body>
 </html>
